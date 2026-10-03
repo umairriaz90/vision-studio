@@ -27,6 +27,7 @@ import {
 } from '@/features/generation/accelerationRequest';
 import { getActiveUserAccount } from '@/features/accounts/providerRouting';
 import { runTimelineClipGeneration } from '@/features/timeline/runTimelineClipGeneration';
+import { isWebVideoGenerationAvailable, webVideoGeneration } from '@/features/generation/webVideoGeneration';
 import {
   makePollErrorBudget,
   recordPollError,
@@ -961,7 +962,7 @@ export function GeneratePanel() {
           throw new Error(SVD_REFERENCE_ERROR);
         }
 
-        const result = await window.electron.generation.generateVideo({
+        const videoParams = {
           prompt: imageConfig.prompt.trim(),
           image_path: useHuggingFaceVideo ? undefined : (motionReferenceImage ?? undefined),
           width: dimensions.width,
@@ -977,7 +978,10 @@ export function GeneratePanel() {
           acceleration_settings: toAccelerationRequestPayload(
             useAppStore.getState().accelerationSettings,
           ),
-        });
+        };
+        const result = isWebVideoGenerationAvailable()
+          ? await webVideoGeneration.generateVideo(videoParams)
+          : await window.electron.generation.generateVideo(videoParams);
 
         if (result.success && result.jobId) {
           updateGenStatus({ activeJobId: result.jobId });
@@ -1037,7 +1041,9 @@ export function GeneratePanel() {
     pollErrorBudgetRef.current = makePollErrorBudget(5);
     const checkStatus = async () => {
       try {
-        const status = await window.electron.generation.getStatus(jobId);
+        const status = isWebVideoGenerationAvailable()
+          ? await webVideoGeneration.getStatus(jobId)
+          : await window.electron.generation.getStatus(jobId);
         pollErrorBudgetRef.current = recordPollSuccess(pollErrorBudgetRef.current);
         if (status.status === 'completed') {
           const existingJob = useAppStore.getState().activeJobs.find((job) => job.id === jobId);
@@ -1070,13 +1076,15 @@ export function GeneratePanel() {
               output_root:
                 typeof existingJob?.params?.output_root === 'string'
                   ? existingJob.params.output_root
-                  : resolveOutputRoot(
-                      (await window.electron.settings.get()).defaultOutputPath,
-                      await window.electron.app.getPath('userData')
-                    ),
+                  : isWebVideoGenerationAvailable()
+                    ? ''
+                    : resolveOutputRoot(
+                        (await window.electron.settings.get()).defaultOutputPath,
+                        await window.electron.app.getPath('userData')
+                      ),
             },
           });
-          await window.electron.notifications.notify('generation_complete', {
+          await window.electron?.notifications?.notify?.('generation_complete', {
             title: `${imageConfig.generationType === 'image' ? 'Image' : 'Video'} Ready`,
             body: imageConfig.prompt.trim().slice(0, 120) || 'Generation completed successfully.',
           });
@@ -1094,7 +1102,7 @@ export function GeneratePanel() {
             error: status.error,
             completedAt: status.completed_at ? new Date(status.completed_at) : new Date(),
           });
-          await window.electron.notifications.notify('generation_failed', {
+          await window.electron?.notifications?.notify?.('generation_failed', {
             title: `${imageConfig.generationType === 'image' ? 'Image' : 'Video'} Failed`,
             body: status.error || 'Generation failed.',
           });
